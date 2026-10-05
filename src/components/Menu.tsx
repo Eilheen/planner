@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Cloud, Download, Eraser, Forward, Gauge, Keyboard, Monitor, Moon, MoreHorizontal, Sun, Upload } from 'lucide-react';
+import { Cloud, Download, Fingerprint, KeyRound, Lock, Eraser, Forward, Gauge, Keyboard, Monitor, Moon, MoreHorizontal, Sun, Upload } from 'lucide-react';
 import type { ThemeMode } from '@/types';
 import { fmtDur } from '@/utils/plan';
 import { iconBtn } from '@/ui';
@@ -16,6 +16,16 @@ interface Props {
   onClearSamples: () => void;
   onSync?: () => void;
   syncedEmail?: string;
+  lock?: {
+    enabled: boolean;
+    bioName: string | null;
+    bioOn: boolean;
+    onEnable: () => void;
+    onChange: () => void;
+    onLockNow: () => void;
+    onDisable: () => void;
+    onToggleBio: () => void;
+  };
 }
 
 const item =
@@ -113,6 +123,34 @@ export function Menu(p: Props) {
               </span>
             </button>
           )}
+          {p.lock &&
+            (p.lock.enabled ? (
+              <>
+                <button type="button" className={item} onClick={run(p.lock.onLockNow)}>
+                  <Lock className="h-4 w-4 text-slate-400" />
+                  Заблокировать сейчас
+                </button>
+                <button type="button" className={item} onClick={run(p.lock.onChange)}>
+                  <KeyRound className="h-4 w-4 text-slate-400" />
+                  Сменить код
+                </button>
+                {p.lock.bioName && (
+                  <button type="button" className={item} onClick={run(p.lock.onToggleBio)}>
+                    <Fingerprint className="h-4 w-4 text-slate-400" />
+                    {p.lock.bioOn ? `Выключить ${p.lock.bioName}` : `Включить ${p.lock.bioName}`}
+                  </button>
+                )}
+                <button type="button" className={item} onClick={run(p.lock.onDisable)}>
+                  <KeyRound className="h-4 w-4 text-slate-400" />
+                  Выключить вход по коду
+                </button>
+              </>
+            ) : (
+              <button type="button" className={item} onClick={run(p.lock.onEnable)}>
+                <Lock className="h-4 w-4 text-blue-500" />
+                Вход по коду{p.lock.bioName ? ` и ${p.lock.bioName}` : ''}
+              </button>
+            ))}
           <button type="button" className={item} onClick={run(p.onCarryOver)}>
             <Forward className="h-4 w-4 text-slate-400" />
             Перенести невыполненное на след. неделю

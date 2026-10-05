@@ -66,3 +66,47 @@ input[type='search']::-webkit-search-cancel-button {
     scroll-behavior: auto !important;
   }
 }
+
+/* ---------- экран блокировки ---------- */
+@keyframes lock-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-12px); }
+  40% { transform: translateX(12px); }
+  60% { transform: translateX(-7px); }
+  80% { transform: translateX(7px); }
+}
+@keyframes lock-pop {
+  0% { transform: scale(0.5); }
+  60% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+@keyframes lock-draw {
+  to { stroke-dashoffset: 0; }
+}
+@keyframes lock-ring {
+  0% { transform: scale(0.8); opacity: 0.55; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+@keyframes lock-blob {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(40px, -50px) scale(1.15); }
+  66% { transform: translate(-30px, 30px) scale(0.92); }
+}
+@keyframes lock-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes lock-sink {
+  to { opacity: 0; transform: translateY(24px) scale(0.96); }
+}
+@keyframes lock-out {
+  to { opacity: 0; transform: scale(1.08); filter: blur(6px); }
+}
+.lock-shake { animation: lock-shake 0.42s ease-in-out; }
+.lock-pop { animation: lock-pop 0.22s ease-out; }
+.lock-blob { animation: lock-blob 18s ease-in-out infinite; }
+.lock-rise { animation: lock-rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.lock-sink { animation: lock-sink 0.35s ease-in forwards; }
+.lock-out { animation: lock-out 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+.lock-ring { animation: lock-ring 1s ease-out infinite; }
+.lock-check { stroke-dasharray: 48; stroke-dashoffset: 48; animation: lock-draw 0.45s 0.15s cubic-bezier(0.65, 0, 0.35, 1) forwards; }

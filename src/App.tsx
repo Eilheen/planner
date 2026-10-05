@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Sparkles, X } from 'lucide-react';
 import type { Task, View } from '@/types';
 import { useStore } from '@/hooks/useStore';
@@ -6,7 +6,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { useToasts, type ToastAction } from '@/hooks/useToasts';
 import type { Parsed } from '@/utils/parse';
 import { addDaysISO, dayLabel, formatDayLong, formatWeekRange, plural, relativeDay, todayISO, weekDaysISO, weekStartISO } from '@/utils/date';
-import { exportJSON, parseImport, readPref, writePref } from '@/utils/storage';
+import { emptyStore, exportJSON, parseImport, readPref, writePref } from '@/utils/storage';
 import { Header } from '@/components/Header';
 import { Menu } from '@/components/Menu';
 import { BottomNav } from '@/components/BottomNav';
@@ -17,6 +17,8 @@ import { TaskEditor } from '@/components/TaskEditor';
 import { Toasts } from '@/components/Toasts';
 import { SyncButton, SyncDialog } from '@/components/SyncDialog';
 import { useSync } from '@/sync/useSync';
+import { LockScreen, PinSetup } from '@/components/LockScreen';
+import { AUTO_LOCK_MS, bioAvailable, bioName, bioRegister, readLock, writeLock, type LockConfig } from '@/lock/lock';
 
 type EditorState = { isNew: true; initial: Partial<Task> } | { isNew: false; id: string };
 
@@ -29,6 +31,61 @@ function App() {
   const { toasts, push, dismiss } = useToasts();
   const sync = useSync(api);
   const [syncOpen, setSyncOpen] = useState(false);
+
+  /* ---------- вход по коду и биометрии ---------- */
+  const [lockConfig, setLockConfig] = useState<LockConfig | null>(readLock);
+  const [locked, setLocked] = useState(() => !!readLock());
+  const [setup, setSetup] = useState<null | 'new' | 'change'>(null);
+  const [canBio, setCanBio] = useState(false);
+  const saveLock = useCallback((c: LockConfig | null) => {
+    writeLock(c);
+    setLockConfig(c);
+  }, []);
+
+  useEffect(() => {
+    void bioAvailable().then(setCanBio);
+  }, []);
+
+  // свернули дольше чем на 5 минут — при возвращении снова спросим код
+  useEffect(() => {
+    let hiddenAt = 0;
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') hiddenAt = Date.now();
+      else if (hiddenAt && Date.now() - hiddenAt > AUTO_LOCK_MS && readLock()) setLocked(true);
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+
+  // после первого входа в аккаунт предлагаем задать код (один раз, «Пропустить» запоминается)
+  const prompted = useRef(false);
+  useEffect(() => {
+    if (!sync.user || lockConfig || locked || syncOpen || setup || prompted.current) return;
+    if (readPref('planner:lockSkip', ['0', '1'] as const, '0') === '1') return;
+    prompted.current = true;
+    const t = window.setTimeout(() => setSetup('new'), 600);
+    return () => window.clearTimeout(t);
+  }, [sync.user, lockConfig, locked, syncOpen, setup]);
+
+  // вышли из аккаунта — код больше не нужен
+  const prevUser = useRef(sync.user);
+  useEffect(() => {
+    if (prevUser.current && !sync.user) saveLock(null);
+    prevUser.current = sync.user;
+  }, [sync.user, saveLock]);
+
+  /** «Забыли код» или слишком много ошибок: выходим и чистим устройство, задачи остаются в облаке */
+  const resetDevice = useCallback(async () => {
+    try {
+      await sync.signOut();
+    } catch {
+      /* без сети всё равно чистим локально */
+    }
+    saveLock(null);
+    api.replace(emptyStore());
+    setLocked(false);
+    setSyncOpen(true);
+  }, [sync, saveLock, api]);
 
 
   const [view, setViewState] = useState<View>(() => readPref('planner:view', VIEW_IDS, 'day'));
@@ -97,7 +154,7 @@ function App() {
   // горячие клавиши (по коду клавиши, поэтому работают и в русской раскладке)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (editor || syncOpen || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (editor || syncOpen || locked || setup || e.metaKey || e.ctrlKey || e.altKey) return;
       const el = e.target;
       if (el instanceof Element && el.closest('input, textarea, select, [contenteditable="true"]')) return;
       switch (e.code) {
@@ -133,7 +190,7 @@ function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [editor, syncOpen, openNew, shift, setView, today]);
+  }, [editor, syncOpen, locked, setup, openNew, shift, setView, today]);
 
   /* ---------- заголовок и прогресс для текущего раздела ---------- */
   const header = useMemo(() => {
@@ -228,6 +285,37 @@ function App() {
           <Menu
             onSync={sync.enabled ? () => setSyncOpen(true) : undefined}
             syncedEmail={sync.user?.email}
+            lock={
+              sync.user
+                ? {
+                    enabled: !!lockConfig,
+                    bioName: canBio ? bioName() : null,
+                    bioOn: !!lockConfig?.bioId,
+                    onEnable: () => setSetup('new'),
+                    onChange: () => setSetup('change'),
+                    onLockNow: () => setLocked(true),
+                    onDisable: () => {
+                      saveLock(null);
+                      push('Вход по коду выключен');
+                    },
+                    onToggleBio: async () => {
+                      if (!lockConfig) return;
+                      if (lockConfig.bioId) {
+                        saveLock({ ...lockConfig, bioId: undefined });
+                        push(`${bioName()}: выключено`);
+                        return;
+                      }
+                      try {
+                        const bioId = await bioRegister(sync.user?.email ?? '');
+                        saveLock({ ...lockConfig, bioId });
+                        push(`${bioName()}: включено`);
+                      } catch {
+                        push(`Не получилось включить ${bioName()}`, undefined, 'error');
+                      }
+                    },
+                  }
+                : undefined
+            }
             theme={theme}
             onTheme={setTheme}
             dayLimit={store.settings.dayLimit}
@@ -339,6 +427,29 @@ function App() {
             setSyncOpen(false);
             push('Готово! Задачи синхронизируются между устройствами.');
           }}
+        />
+      )}
+
+      {setup && (
+        <PinSetup
+          email={sync.user?.email}
+          prev={setup === 'change' ? lockConfig : null}
+          onDone={(c) => saveLock(c)}
+          onClose={(skipped) => {
+            if (skipped && setup === 'new') writePref('planner:lockSkip', '1');
+            setSetup(null);
+          }}
+        />
+      )}
+
+      {locked && lockConfig && (
+        <LockScreen
+          config={lockConfig}
+          email={sync.user?.email}
+          todayLeft={store.tasks.filter((t) => t.date === today && !t.done).length}
+          onUpdate={saveLock}
+          onUnlocked={() => setLocked(false)}
+          onReset={() => void resetDevice()}
         />
       )}
 
