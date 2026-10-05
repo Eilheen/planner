@@ -17,6 +17,7 @@ export interface Task {
   createdAt: number;
   doneAt?: number;
   sample?: boolean; // пример, который можно удалить одной кнопкой
+  updatedAt?: number; // для слияния при синхронизации
 }
 
 export interface Settings {
@@ -30,6 +31,10 @@ export interface Store {
   activeId: string | null;
   activeSince: number | null;
   settings: Settings;
+  // служебное для синхронизации: когда что менялось и что удалено
+  deleted: Record<string, number>;
+  notesAt: Record<string, number>;
+  settingsAt: number;
 }
 
 export interface CategoryMeta {

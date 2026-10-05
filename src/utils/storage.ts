@@ -12,7 +12,7 @@ export function genId(): string {
 }
 
 export function emptyStore(): Store {
-  return { version: 2, tasks: [], notes: {}, activeId: null, activeSince: null, settings: { dayLimit: 360 } };
+  return { version: 2, tasks: [], notes: {}, activeId: null, activeSince: null, settings: { dayLimit: 360 }, deleted: {}, notesAt: {}, settingsAt: 0 };
 }
 
 function isStore(x: unknown): x is Store {

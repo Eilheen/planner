@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Download, Eraser, Forward, Gauge, Keyboard, Monitor, Moon, MoreHorizontal, Sun, Upload } from 'lucide-react';
+import { Cloud, Download, Eraser, Forward, Gauge, Keyboard, Monitor, Moon, MoreHorizontal, Sun, Upload } from 'lucide-react';
 import type { ThemeMode } from '@/types';
 import { fmtDur } from '@/utils/plan';
 import { iconBtn } from '@/ui';
@@ -14,6 +14,8 @@ interface Props {
   onImport: (file: File) => void;
   hasSamples: boolean;
   onClearSamples: () => void;
+  onSync?: () => void;
+  syncedEmail?: string;
 }
 
 const item =
@@ -102,6 +104,15 @@ export function Menu(p: Props) {
           </div>
 
           <div className="my-1 border-t border-slate-100 dark:border-slate-700" />
+          {p.onSync && (
+            <button type="button" className={item} onClick={run(p.onSync)}>
+              <Cloud className="h-4 w-4 text-blue-500" />
+              <span className="min-w-0">
+                {p.syncedEmail ? 'Синхронизация включена' : 'Синхронизация между устройствами'}
+                {p.syncedEmail && <span className="block truncate text-xs text-slate-400">{p.syncedEmail}</span>}
+              </span>
+            </button>
+          )}
           <button type="button" className={item} onClick={run(p.onCarryOver)}>
             <Forward className="h-4 w-4 text-slate-400" />
             Перенести невыполненное на след. неделю

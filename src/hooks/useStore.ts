@@ -23,6 +23,17 @@ function orderFor(s: Store, date: string | null, time?: string, exclude?: string
   return all.length ? Math.max(...all.map((t) => t.order)) + 1 : 0;
 }
 
+/** Задача изменилась: отмечаем время, чтобы при синхронизации победила свежая версия */
+const touch = (t: Task, patch: Partial<Task>): Task => ({ ...t, ...patch, updatedAt: Date.now() });
+
+/** Удалённые задачи запоминаются, чтобы они не вернулись с другого устройства */
+function tombstones(s: Store, ids: Iterable<string>): Record<string, number> {
+  const now = Date.now();
+  const next = { ...s.deleted };
+  for (const id of ids) next[id] = now;
+  return next;
+}
+
 export function useStore() {
   const [boot] = useState(loadStore);
   const [store, setStore] = useState<Store>(boot.store);
@@ -36,6 +47,7 @@ export function useStore() {
 
   const addTask = useCallback((p: NewTask) => {
     const id = genId();
+    const now = Date.now();
     setStore((s) => ({
       ...s,
       tasks: [
@@ -48,7 +60,8 @@ export function useStore() {
           ...p,
           id,
           text: p.text.trim(),
-          createdAt: Date.now(),
+          createdAt: now,
+          updatedAt: now,
           order: orderFor(s, p.date ?? null, p.time),
         },
       ],
@@ -62,7 +75,7 @@ export function useStore() {
       activeId: patch.done && s.activeId === id ? null : s.activeId,
       tasks: s.tasks.map((t) => {
         if (t.id !== id) return t;
-        const n: Task = { ...t, ...patch, sample: false };
+        const n = touch(t, { ...patch, sample: false });
         if (patch.date !== undefined && patch.date !== t.date) n.order = orderFor(s, n.date, n.time, id);
         if (patch.done !== undefined) n.doneAt = patch.done ? Date.now() : undefined;
         return n;
@@ -74,9 +87,7 @@ export function useStore() {
     setStore((s) => ({
       ...s,
       activeId: s.activeId === id ? null : s.activeId,
-      tasks: s.tasks.map((t) =>
-        t.id === id ? { ...t, done: !t.done, doneAt: t.done ? undefined : Date.now() } : t
-      ),
+      tasks: s.tasks.map((t) => (t.id === id ? touch(t, { done: !t.done, doneAt: t.done ? undefined : Date.now() }) : t)),
     }));
   }, []);
 
@@ -85,6 +96,7 @@ export function useStore() {
       ...s,
       activeId: s.activeId === id ? null : s.activeId,
       tasks: s.tasks.filter((t) => t.id !== id),
+      deleted: tombstones(s, [id]),
     }));
   }, []);
 
@@ -105,9 +117,9 @@ export function useStore() {
         ...s,
         tasks: s.tasks.map((x) =>
           x.id === id
-            ? { ...x, date: toDate, order: orders.get(id)! }
-            : orders.has(x.id)
-              ? { ...x, order: orders.get(x.id)! }
+            ? touch(x, { date: toDate, order: orders.get(id)! })
+            : orders.has(x.id) && x.order !== orders.get(x.id)
+              ? touch(x, { order: orders.get(x.id)! })
               : x
         ),
       };
@@ -122,7 +134,7 @@ export function useStore() {
       return {
         ...s,
         activeId: s.activeId && set.has(s.activeId) ? null : s.activeId,
-        tasks: s.tasks.map((t) => (set.has(t.id) ? { ...t, date: toDate, order: next++ } : t)),
+        tasks: s.tasks.map((t) => (set.has(t.id) ? touch(t, { date: toDate, order: next++ }) : t)),
       };
     });
   }, []);
@@ -132,18 +144,16 @@ export function useStore() {
     const set = new Set(dates);
     setStore((s) => ({
       ...s,
-      tasks: s.tasks.map((t) =>
-        t.date && set.has(t.date) && !t.done ? { ...t, date: addDaysISO(t.date, 7) } : t
-      ),
+      tasks: s.tasks.map((t) => (t.date && set.has(t.date) && !t.done ? touch(t, { date: addDaysISO(t.date, 7) }) : t)),
     }));
   }, []);
 
   const setNotes = useCallback((weekIso: string, text: string) => {
-    setStore((s) => ({ ...s, notes: { ...s.notes, [weekIso]: text } }));
+    setStore((s) => ({ ...s, notes: { ...s.notes, [weekIso]: text }, notesAt: { ...s.notesAt, [weekIso]: Date.now() } }));
   }, []);
 
   const setSettings = useCallback((patch: Partial<Settings>) => {
-    setStore((s) => ({ ...s, settings: { ...s.settings, ...patch } }));
+    setStore((s) => ({ ...s, settings: { ...s.settings, ...patch }, settingsAt: Date.now() }));
   }, []);
 
   const clearSamples = useCallback(() => {
@@ -156,15 +166,45 @@ export function useStore() {
     }));
   }, []);
 
-  const replace = useCallback((s: Store) => setStore(s), []);
+  /**
+   * Вернуть сохранённое состояние (кнопка «Отменить»). Вернувшиеся и изменённые задачи
+   * получают свежую отметку времени, иначе синхронизация снова применила бы отменённое.
+   */
+  const restore = useCallback((snap: Store) => {
+    setStore((cur) => {
+      const now = Date.now();
+      const curById = new Map(cur.tasks.map((t) => [t.id, t]));
+      const snapIds = new Set(snap.tasks.map((t) => t.id));
+      const tasks = snap.tasks.map((t) => {
+        const c = curById.get(t.id);
+        return !c || JSON.stringify(c) !== JSON.stringify(t) ? { ...t, updatedAt: now } : c;
+      });
+      const deleted = { ...cur.deleted };
+      for (const id of snapIds) delete deleted[id];
+      for (const t of cur.tasks) if (!snapIds.has(t.id)) deleted[t.id] = now;
+      const notesAt = { ...cur.notesAt };
+      for (const k of new Set([...Object.keys(snap.notes), ...Object.keys(cur.notes)]))
+        if ((snap.notes[k] ?? '') !== (cur.notes[k] ?? '')) notesAt[k] = now;
+      return {
+        ...snap,
+        tasks,
+        deleted,
+        notesAt,
+        settingsAt: JSON.stringify(snap.settings) !== JSON.stringify(cur.settings) ? now : cur.settingsAt,
+      };
+    });
+  }, []);
+
+  /** Полная замена (импорт из файла или данные из облака) */
+  const replace = useCallback((s: Store | ((cur: Store) => Store)) => setStore(s), []);
   const snapshot = useCallback(() => ref.current, []);
 
   const actions = useMemo(
     () => ({
       addTask, updateTask, toggleDone, deleteTask, startTask, moveTask, moveMany,
-      carryOver, setNotes, setSettings, clearSamples, replace, snapshot,
+      carryOver, setNotes, setSettings, clearSamples, restore, replace, snapshot,
     }),
-    [addTask, updateTask, toggleDone, deleteTask, startTask, moveTask, moveMany, carryOver, setNotes, setSettings, clearSamples, replace, snapshot]
+    [addTask, updateTask, toggleDone, deleteTask, startTask, moveTask, moveMany, carryOver, setNotes, setSettings, clearSamples, restore, replace, snapshot]
   );
 
   return { store, saveOk, notice: boot.notice, ...actions };

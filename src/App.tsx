@@ -15,6 +15,8 @@ import { WeekView } from '@/components/WeekView';
 import { TasksView } from '@/components/TasksView';
 import { TaskEditor } from '@/components/TaskEditor';
 import { Toasts } from '@/components/Toasts';
+import { SyncButton, SyncDialog } from '@/components/SyncDialog';
+import { useSync } from '@/sync/useSync';
 
 type EditorState = { isNew: true; initial: Partial<Task> } | { isNew: false; id: string };
 
@@ -25,6 +27,9 @@ function App() {
   const api = useStore();
   const { store } = api;
   const { toasts, push, dismiss } = useToasts();
+  const sync = useSync(api);
+  const [syncOpen, setSyncOpen] = useState(false);
+
 
   const [view, setViewState] = useState<View>(() => readPref('planner:view', VIEW_IDS, 'day'));
   const [date, setDate] = useState(todayISO);
@@ -52,7 +57,7 @@ function App() {
     (text: string, fn: () => void) => {
       const snap = api.snapshot();
       fn();
-      push(text, { label: 'Отменить', fn: () => api.replace(snap) });
+      push(text, { label: 'Отменить', fn: () => api.restore(snap) });
     },
     [api, push]
   );
@@ -92,7 +97,7 @@ function App() {
   // горячие клавиши (по коду клавиши, поэтому работают и в русской раскладке)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (editor || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (editor || syncOpen || e.metaKey || e.ctrlKey || e.altKey) return;
       const el = e.target;
       if (el instanceof Element && el.closest('input, textarea, select, [contenteditable="true"]')) return;
       switch (e.code) {
@@ -128,7 +133,7 @@ function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [editor, openNew, shift, setView, today]);
+  }, [editor, syncOpen, openNew, shift, setView, today]);
 
   /* ---------- заголовок и прогресс для текущего раздела ---------- */
   const header = useMemo(() => {
@@ -187,7 +192,7 @@ function App() {
     reader.onload = () => {
       try {
         const next = parseImport(String(reader.result));
-        undoable(`Импортировано: ${next.tasks.length} ${plural(next.tasks.length, 'задача', 'задачи', 'задач')}`, () => api.replace(next));
+        undoable(`Импортировано: ${next.tasks.length} ${plural(next.tasks.length, 'задача', 'задачи', 'задач')}`, () => api.restore(next));
       } catch {
         push('Не получилось прочитать файл. Нужен JSON, сохранённый через «Экспорт».', undefined, 'error');
       }
@@ -218,7 +223,11 @@ function App() {
         progress={header.progress}
         onNew={() => openNew()}
         right={
+          <>
+          <SyncButton sync={sync} onClick={() => setSyncOpen(true)} />
           <Menu
+            onSync={sync.enabled ? () => setSyncOpen(true) : undefined}
+            syncedEmail={sync.user?.email}
             theme={theme}
             onTheme={setTheme}
             dayLimit={store.settings.dayLimit}
@@ -229,6 +238,7 @@ function App() {
             hasSamples={hasSamples}
             onClearSamples={() => undoable('Примеры удалены', api.clearSamples)}
           />
+          </>
         }
       />
 
@@ -318,6 +328,17 @@ function App() {
                 }
               : undefined
           }
+        />
+      )}
+
+      {syncOpen && (
+        <SyncDialog
+          sync={sync}
+          onClose={() => setSyncOpen(false)}
+          onSignedIn={() => {
+            setSyncOpen(false);
+            push('Готово! Задачи синхронизируются между устройствами.');
+          }}
         />
       )}
 
